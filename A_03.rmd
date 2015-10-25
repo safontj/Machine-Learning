@@ -1,0 +1,137 @@
+---
+title: "Practical Machine Learning - Prediction Assignment"
+author: "Jordi Safont"
+date: "Saturday, October 24, 2015"
+output: html_document
+---
+
+## Overview
+In this assignment we will build a model to predict the way a certain activity is performed.
+
+To build and test the model we have two sets of data coming from accelerometers on the belt, forearm, arm and dumbell of 6 particpants who were asled to perform barbell lifts correctly and incorrectly in 5 different ways. The source of the data is http:/groupware.les.inf.puc-rio.br/har
+
+## Data
+First the training and testing data sets for the project are loaded:
+
+To ensure consistency in the training set, we'll replace NAs, empty and #DIV/0! excel errors with NA strings
+
+
+```{r}
+trainUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+training <- read.csv(url(trainUrl), na.strings=c("NA","#DIV/0!",""))
+testing <- read.csv(url(testUrl))
+```
+
+
+
+```{r echo = TRUE}
+dim(training)
+```
+
+Not all data are relevant for building the model. We'll start removing those parameters which have at least 90% of the NA values in the observations.
+
+```{r}
+# Number of NAs in each comlumn of training
+nNAs <- sapply(training,function(x) sum(is.na(x)))
+
+# Columns that have more than 90% NAs
+colNAs <- c()
+for (i in 1:length(nNAs)) {
+   if (nNAs[[i]]/dim(training)[1] >= 0.9)
+     {colNAs <- append(colNAs,i)}
+  }
+
+# Removing the parameters with more than 90% missing values
+training <- training[,-colNAs]
+```
+
+Yet, some of the parameters show almost no variance, and are therefore of little use to build our model. we remove them as well from our training set.
+
+```{r}
+# we use nearZeroVAr function of caret package
+library(caret)
+near0 <- nearZeroVar(training,saveMetrics = TRUE)
+training <- training[,near0$nzv == FALSE]
+```
+
+We take a final look at our current training set to remove those parameters that are of little use to the model (they don't have relevant information on the way the exercise was executed)
+
+```{r}
+# we take a look at the remaining variables
+names(training)
+
+# The 6 first columns are unrelated with the exercise execution: "X", "user_name", "raw_timestamp_part_1", "raw_timestamp_part_2", "cvtd_timestamp","num_window" so we remove them from the set
+
+training <- training[,-c(1:6)]
+```
+
+With this reduced training set we can start to build our model.
+
+## Model
+
+We are going to use cross-validation for our model so we subset our training set into two subsets:
+
+```{r}
+#70% for training and 30% for cross-validations 
+i <- createDataPartition(y = training$classe, p=0.7, list=FALSE)
+subTraining <- training[i,]
+subValidation <- training[-i,]
+```
+
+We will build 2 models to address the classification problems: 
+
+```{r}
+# Regression trees
+set.seed(1234)
+library(rpart)
+rpartModelFit <- rpart(classe ~ ., data=subTraining, method="class")
+
+# Random Forest
+library(randomForest)
+rfModelFit <- randomForest(classe ~ ., data=subTraining)
+
+```
+
+We check the accuracy of the models with the data out of the training sample. Random forest should give the highest accuracy, above 95%:
+
+```{r echo =TRUE}
+# Prediction with models
+
+rpartPrediction <- predict(rpartModelFit, subValidation, type = "class")
+rpartCM <- confusionMatrix(rpartPrediction, subValidation$classe)
+
+rfPrediction <- predict(rfModelFit, subValidation)
+rfCM <- confusionMatrix(rfPrediction, subValidation$classe)
+
+accuracy <- c(rpartCM$overall['Accuracy'],rfCM$overall['Accuracy'])
+names(accuracy) <- c("rpart","rf")
+
+accuracy
+
+err <- 1 - accuracy
+
+```
+
+As expected the accuracy of the Random Forest method is the best one, with an estimated out of sample error of ```r err[[2]]```, therefore we'll use it for getting the final model prediction.
+
+## Final model prediction and submission
+
+```{r}
+
+# Predict outcomes on the Testing set using RF
+
+predictFinal <- predict(rfModelFit, testing, type="class")
+
+predictFinal
+
+# Files for submission
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(predictFinal)
